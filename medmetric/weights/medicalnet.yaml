@@ -1,0 +1,86 @@
+schema_version: 1
+
+medicalnet:
+  # ResNet-10
+  - depth: 10
+    use_23dataset: false
+    repo_id: TencentMedicalNet/MedicalNet-Resnet10
+    filename: resnet_10.pth
+    revision: main
+    sha256: "2824951eaef30e115929b89bec72342380b08d14792bda1449974ac849e497c0"
+
+  - depth: 10
+    use_23dataset: true
+    repo_id: TencentMedicalNet/MedicalNet-Resnet10
+    filename: resnet_10_23dataset.pth
+    revision: main
+    sha256: "afa8055f3e47f4a18239495d92a7abc587902c69c31c743de2b2784653b72605"
+
+  # ResNet-18
+  - depth: 18
+    use_23dataset: false
+    repo_id: TencentMedicalNet/MedicalNet-Resnet18
+    filename: resnet_18.pth
+    revision: main
+    sha256: "38b3a17444c5c18a795355a868e6a2d9ce9318054067f5373d337f55c0f61da3"
+
+  - depth: 18
+    use_23dataset: true
+    repo_id: TencentMedicalNet/MedicalNet-Resnet18
+    filename: resnet_18_23dataset.pth
+    revision: main
+    sha256: "61224f9317fcce873366deb3703183e92cc47325b726b69691b33536244e10f4"
+
+  # ResNet-34
+  - depth: 34
+    use_23dataset: false
+    repo_id: TencentMedicalNet/MedicalNet-Resnet34
+    filename: resnet_34.pth
+    revision: main
+    sha256: "977a1be79298602fa35980de9c03789229ad36087fb1f4d9bde468aec653c658"
+
+  - depth: 34
+    use_23dataset: true
+    repo_id: TencentMedicalNet/MedicalNet-Resnet34
+    filename: resnet_34_23dataset.pth
+    revision: main
+    sha256: "3ea7188e396774e4ef95b66e5e90a78273bb33f6e58d3d717bf24f5f1aaeaa28"
+
+  # ResNet-50
+  - depth: 50
+    use_23dataset: false
+    repo_id: TencentMedicalNet/MedicalNet-Resnet50
+    filename: resnet_50.pth
+    revision: main
+    sha256: "5b6189cafbee2f5604a7279b62bc163365aa6a86a377e1dc260a14275cacbd84"
+
+  - depth: 50
+    use_23dataset: true
+    repo_id: TencentMedicalNet/MedicalNet-Resnet50
+    filename: resnet_50_23dataset.pth
+    revision: main
+    sha256: "ff48a62219073fb977fd3f4ddfb8dc1367f0ec156c8d6f6c37e205bd683a246e"
+
+  # ResNet-101
+  - depth: 101
+    use_23dataset: false
+    repo_id: TencentMedicalNet/MedicalNet-Resnet101
+    filename: resnet_101.pth
+    revision: main
+    sha256: "a26bbcf9b2ad35f048b0fa317234c003f171a4d719760e5c4aff9f793654ebcf"
+
+  # ResNet-152
+  - depth: 152
+    use_23dataset: false
+    repo_id: TencentMedicalNet/MedicalNet-Resnet152
+    filename: resnet_152.pth
+    revision: main
+    sha256: "e96c459f5317ef2cbb898c91575402da2c78b31a31f55c5d28943683fe0626da"
+
+  # ResNet-200
+  - depth: 200
+    use_23dataset: false
+    repo_id: TencentMedicalNet/MedicalNet-Resnet200
+    filename: resnet_200.pth
+    revision: main
+    sha256: "df58525b0276117169782617a379480d2cbc75230e84e152c603bf22a1fabfa8"
