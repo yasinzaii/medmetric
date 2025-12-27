@@ -4,13 +4,21 @@ medicalnet:
   # ResNet-10
   - depth: 10
     use_23dataset: false
+    layers: [1, 1, 1, 1]
+    block: BasicBlock
+    shortcut_type: B
     repo_id: TencentMedicalNet/MedicalNet-Resnet10
     filename: resnet_10.pth
     revision: main
     sha256: "2824951eaef30e115929b89bec72342380b08d14792bda1449974ac849e497c0"
-
+    state_dict_key: state_dict
+    strip_prefix: module.
+  
   - depth: 10
     use_23dataset: true
+    layers: [1, 1, 1, 1]
+    block: BasicBlock
+    shortcut_type: B
     repo_id: TencentMedicalNet/MedicalNet-Resnet10
     filename: resnet_10_23dataset.pth
     revision: main
@@ -19,6 +27,9 @@ medicalnet:
   # ResNet-18
   - depth: 18
     use_23dataset: false
+    layers: [2, 2, 2, 2]
+    block: BasicBlock
+    shortcut_type: A
     repo_id: TencentMedicalNet/MedicalNet-Resnet18
     filename: resnet_18.pth
     revision: main
@@ -26,6 +37,9 @@ medicalnet:
 
   - depth: 18
     use_23dataset: true
+    layers: [2, 2, 2, 2]
+    block: BasicBlock
+    shortcut_type: A
     repo_id: TencentMedicalNet/MedicalNet-Resnet18
     filename: resnet_18_23dataset.pth
     revision: main
@@ -34,6 +48,9 @@ medicalnet:
   # ResNet-34
   - depth: 34
     use_23dataset: false
+    layers: [3, 4, 6, 3]
+    block: BasicBlock
+    shortcut_type: A
     repo_id: TencentMedicalNet/MedicalNet-Resnet34
     filename: resnet_34.pth
     revision: main
@@ -41,6 +58,9 @@ medicalnet:
 
   - depth: 34
     use_23dataset: true
+    layers: [3, 4, 6, 3]
+    block: BasicBlock
+    shortcut_type: A
     repo_id: TencentMedicalNet/MedicalNet-Resnet34
     filename: resnet_34_23dataset.pth
     revision: main
@@ -49,6 +69,9 @@ medicalnet:
   # ResNet-50
   - depth: 50
     use_23dataset: false
+    layers: [3, 4, 6, 3]
+    block: Bottleneck
+    shortcut_type: B
     repo_id: TencentMedicalNet/MedicalNet-Resnet50
     filename: resnet_50.pth
     revision: main
@@ -56,6 +79,9 @@ medicalnet:
 
   - depth: 50
     use_23dataset: true
+    layers: [3, 4, 6, 3]
+    block: Bottleneck
+    shortcut_type: B
     repo_id: TencentMedicalNet/MedicalNet-Resnet50
     filename: resnet_50_23dataset.pth
     revision: main
@@ -64,6 +90,9 @@ medicalnet:
   # ResNet-101
   - depth: 101
     use_23dataset: false
+    layers: [3, 4, 23, 3]
+    block: Bottleneck
+    shortcut_type: B
     repo_id: TencentMedicalNet/MedicalNet-Resnet101
     filename: resnet_101.pth
     revision: main
@@ -72,6 +101,9 @@ medicalnet:
   # ResNet-152
   - depth: 152
     use_23dataset: false
+    layers: [3, 8, 36, 3]
+    block: Bottleneck
+    shortcut_type: B
     repo_id: TencentMedicalNet/MedicalNet-Resnet152
     filename: resnet_152.pth
     revision: main
@@ -80,6 +112,9 @@ medicalnet:
   # ResNet-200
   - depth: 200
     use_23dataset: false
+    layers: [3, 24, 36, 3]
+    block: Bottleneck
+    shortcut_type: B
     repo_id: TencentMedicalNet/MedicalNet-Resnet200
     filename: resnet_200.pth
     revision: main

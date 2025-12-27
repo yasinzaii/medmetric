@@ -15,8 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from huggingface_hub import hf_hub_download
-
 import importlib.resources as resources
 
 
@@ -26,12 +24,26 @@ _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 @dataclass(frozen=True)
 class MedicalNetWeightEntry:
+    """
+    Sigle MedicalNet weight entry from the YAML manifest.
+    """
+    
     depth: int
     use_23dataset: bool
     repo_id: str
     filename: str
     revision: str
     sha256: str
+
+    # Optional architecture metadata
+    layers: Optional[Tuple[int, int, int, int]] = None
+    block: Optional[str] = None
+    shortcut_type: str = "B"
+
+    # Optional checkpoint unpacking hints
+    state_dict_key: Optional[str] = "state_dict"
+    strip_prefix: Tuple[str, ...] = ("module.",)
+
 
 
 def _normalize_sha256(s: str) -> str:
@@ -93,6 +105,34 @@ def load_medicalnet_manifest() -> Dict[Tuple[int, bool], MedicalNetWeightEntry]:
         except KeyError as e:
             raise RuntimeError(f"Missing required field {e!s} in entry medicalnet[{i}]") from e
 
+        # Optional metadata (kept in manifest for flexibility)
+        shortcut_type = str(item.get("shortcut_type", "B")).upper()
+        if shortcut_type not in ("A", "B"):
+            raise ValueError(f"shortcut_type must be 'A' or 'B', got {shortcut_type!r}")
+
+        layers_raw = item.get("layers", None)
+        layers: Optional[Tuple[int, int, int, int]] = None
+        if layers_raw is not None:
+            if not (isinstance(layers_raw, (list, tuple)) and len(layers_raw) == 4):
+                raise ValueError(f"layers must be a list of 4 ints, got: {layers_raw!r}")
+            layers = tuple(int(x) for x in layers_raw)
+
+        block = item.get("block", None)
+        block = str(block) if block is not None else None
+
+        state_dict_key = item.get("state_dict_key", "state_dict")
+        state_dict_key = str(state_dict_key) if state_dict_key is not None else None
+
+        strip_prefix_raw = item.get("strip_prefix", "module.")
+        if strip_prefix_raw is None:
+            strip_prefix = tuple()
+        elif isinstance(strip_prefix_raw, str):
+            strip_prefix = (strip_prefix_raw,)
+        elif isinstance(strip_prefix_raw, (list, tuple)):
+            strip_prefix = tuple(str(x) for x in strip_prefix_raw)
+        else:
+            raise ValueError(f"strip_prefix must be str|list[str]|None, got: {type(strip_prefix_raw)}")
+
         key = (depth, use_23dataset)
         if key in out:
             raise RuntimeError(f"Duplicate manifest key {key} in {path}")
@@ -104,11 +144,14 @@ def load_medicalnet_manifest() -> Dict[Tuple[int, bool], MedicalNetWeightEntry]:
             filename=filename,
             revision=revision,
             sha256=sha256,
+            layers=layers,
+            block=block,
+            shortcut_type=shortcut_type,
+            state_dict_key=state_dict_key,
+            strip_prefix=strip_prefix,
         )
 
     return out
-
-
 def get_medicalnet_entry(*, depth: int, use_23dataset: bool = True) -> MedicalNetWeightEntry:
     """
     Get a manifest entry for (depth, use_23dataset). Raises if not present.
@@ -151,6 +194,13 @@ def resolve_medicalnet_weights(
     Returns:
         Local file path as string.
     """
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "huggingface_hub is required to download MedicalNet weights. Install with: pip install huggingface_hub"
+        ) from e
+
     entry = get_medicalnet_entry(depth=depth, use_23dataset=use_23dataset)
 
     local_path = hf_hub_download(

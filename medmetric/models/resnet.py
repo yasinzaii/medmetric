@@ -5,6 +5,7 @@ from torch.autograd import Variable
 import math
 from functools import partial
 from dataclasses import dataclass
+from typing import Optional, Sequence, Type, Union
 
 __all__ = [
     'ResNet', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
@@ -143,7 +144,7 @@ class MedicalNetResNet(nn.Module):
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
-                m.weight = nn.init.kaiming_normal(m.weight, mode='fan_out')
+                m.weight = nn.init.kaiming_normal_(m.weight, mode='fan_out')
             elif isinstance(m, nn.BatchNorm3d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
@@ -230,25 +231,6 @@ def resnet200(**kwargs):
     return model
 
 
-
-@dataclass(frozen=True)
-class ResNetSpec:
-    depth: int
-    layers: list
-    block: type
-
-
-_SPECS = {
-    10: ResNetSpec(depth=10, layers=[1, 1, 1, 1], block=BasicBlock),
-    18: ResNetSpec(depth=18, layers=[2, 2, 2, 2], block=BasicBlock),
-    34: ResNetSpec(depth=34, layers=[3, 4, 6, 3], block=BasicBlock),
-    50: ResNetSpec(depth=50, layers=[3, 4, 6, 3], block=Bottleneck),
-    101: ResNetSpec(depth=101, layers=[3, 4, 23, 3], block=Bottleneck),
-    152: ResNetSpec(depth=152, layers=[3, 8, 36, 3], block=Bottleneck),
-    200: ResNetSpec(depth=200, layers=[3, 24, 36, 3], block=Bottleneck),
-}
-
-
 class MedicalNetResNetPooled(nn.Module):
     """MedicalNet backbone + global average pooling + flatten.
 
@@ -257,12 +239,9 @@ class MedicalNetResNetPooled(nn.Module):
       - optionally feature_map: (B, C, D', H', W') if return_map=True
     """
 
-    def __init__(self, depth=50, return_map=False, shortcut_type='B', no_cuda=False):
+    def __init__(self, block, layers, return_map=False, shortcut_type='B', no_cuda=False):
         super().__init__()
-        if depth not in _SPECS:
-            raise ValueError(f"Unsupported depth {depth}. Supported: {sorted(_SPECS.keys())}")
-        spec = _SPECS[depth]
-        self.backbone = MedicalNetResNet(spec.block, spec.layers, shortcut_type=shortcut_type, no_cuda=no_cuda)
+        self.backbone = MedicalNetResNet(block, layers, shortcut_type=shortcut_type, no_cuda=no_cuda)
         self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
         self.return_map = return_map
 
@@ -274,19 +253,46 @@ class MedicalNetResNetPooled(nn.Module):
         return feats
 
 
-def medicalnet_resnet(depth=50, pooled=True, return_map=False, shortcut_type='B', no_cuda=False):
+def medicalnet_resnet(
+    block,
+    layers,
+    pooled=True,
+    return_map=False,
+    shortcut_type='B',
+    no_cuda=False,
+):
     """Factory for MedicalNet ResNet.
 
     Args:
-        depth: ResNet depth (10/18/34/50/101/152/200).
+        block: BasicBlock/Bottleneck string ('BasicBlock'/'Bottleneck').
+        layers: list/tuple of 4 ints (e.g. [3,4,6,3]).
         pooled: if True returns pooled features (B,F), else returns feature map (B,C,D',H',W').
         return_map: only used if pooled=True; return (feats, fmap).
         shortcut_type: 'A' or 'B' (MedicalNet convention).
         no_cuda: used for shortcut type 'A' downsample in original code.
     """
-    if depth not in _SPECS:
-        raise ValueError(f"Unsupported depth {depth}. Supported: {sorted(_SPECS.keys())}")
+
+    if isinstance(block, str):
+        b = block.strip().lower()
+        if b in ("basicblock", "basic"):
+            block = BasicBlock
+        elif b in ("bottleneck",):
+            block = Bottleneck
+        else:
+            raise ValueError(
+                f"Unknown block='{block}'. Expected 'BasicBlock' or 'Bottleneck' (or the class itself)."
+            )
+
+    if not isinstance(layers, (list, tuple)) or len(layers) != 4:
+        raise ValueError(f"layers must be a list/tuple of length 4, got {layers!r}")
+    layers = [int(x) for x in layers]
+
     if pooled:
-        return MedicalNetResNetPooled(depth=depth, return_map=return_map, shortcut_type=shortcut_type, no_cuda=no_cuda)
-    spec = _SPECS[depth]
-    return MedicalNetResNet(spec.block, spec.layers, shortcut_type=shortcut_type, no_cuda=no_cuda)
+        return MedicalNetResNetPooled(
+            block=block,
+            layers=layers,
+            return_map=return_map,
+            shortcut_type=shortcut_type,
+            no_cuda=no_cuda,
+        )
+    return MedicalNetResNet(block, layers, shortcut_type=shortcut_type, no_cuda=no_cuda)
