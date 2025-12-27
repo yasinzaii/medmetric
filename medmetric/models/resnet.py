@@ -4,10 +4,13 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 from functools import partial
+from dataclasses import dataclass
 
 __all__ = [
     'ResNet', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
-    'resnet152', 'resnet200'
+    'resnet152', 'resnet200',
+    # MedicalNet backbone + pooling wrappers
+    'MedicalNetResNet', 'MedicalNetResNetPooled', 'medicalnet_resnet'
 ]
 
 
@@ -109,20 +112,16 @@ class Bottleneck(nn.Module):
         return out
 
 
-class ResNet(nn.Module):
+class MedicalNetResNet(nn.Module):
 
     def __init__(self,
                  block,
                  layers,
-                 sample_input_D,
-                 sample_input_H,
-                 sample_input_W,
-                 num_seg_classes,
                  shortcut_type='B',
-                 no_cuda = False):
+                 no_cuda=False):
         self.inplanes = 64
         self.no_cuda = no_cuda
-        super(ResNet, self).__init__()
+        super(MedicalNetResNet, self).__init__()
         self.conv1 = nn.Conv3d(
             1,
             64,
@@ -130,7 +129,7 @@ class ResNet(nn.Module):
             stride=(2, 2, 2),
             padding=(3, 3, 3),
             bias=False)
-            
+
         self.bn1 = nn.BatchNorm3d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
@@ -141,32 +140,6 @@ class ResNet(nn.Module):
             block, 256, layers[2], shortcut_type, stride=1, dilation=2)
         self.layer4 = self._make_layer(
             block, 512, layers[3], shortcut_type, stride=1, dilation=4)
-
-        self.conv_seg = nn.Sequential(
-                                        nn.ConvTranspose3d(
-                                        512 * block.expansion,
-                                        32,
-                                        2,
-                                        stride=2
-                                        ),
-                                        nn.BatchNorm3d(32),
-                                        nn.ReLU(inplace=True),
-                                        nn.Conv3d(
-                                        32,
-                                        32,
-                                        kernel_size=3,
-                                        stride=(1, 1, 1),
-                                        padding=(1, 1, 1),
-                                        bias=False), 
-                                        nn.BatchNorm3d(32),
-                                        nn.ReLU(inplace=True),
-                                        nn.Conv3d(
-                                        32,
-                                        num_seg_classes,
-                                        kernel_size=1,
-                                        stride=(1, 1, 1),
-                                        bias=False) 
-                                        )
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -202,6 +175,7 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        # Return feature map (B, C, D', H', W') after layer4
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -210,54 +184,109 @@ class ResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = self.conv_seg(x)
-
         return x
 
+
+# Backwards-compatible function names; not required by extractor.
+# These now build the backbone feature model instead of the seg head.
+def ResNet(block, layers, **kwargs):
+    shortcut_type = kwargs.get("shortcut_type", "B")
+    no_cuda = kwargs.get("no_cuda", False)
+    return MedicalNetResNet(block, layers, shortcut_type=shortcut_type, no_cuda=no_cuda)
+
+
 def resnet10(**kwargs):
-    """Constructs a ResNet-18 model.
-    """
     model = ResNet(BasicBlock, [1, 1, 1, 1], **kwargs)
     return model
 
 
 def resnet18(**kwargs):
-    """Constructs a ResNet-18 model.
-    """
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
     return model
 
 
 def resnet34(**kwargs):
-    """Constructs a ResNet-34 model.
-    """
     model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
     return model
 
 
 def resnet50(**kwargs):
-    """Constructs a ResNet-50 model.
-    """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     return model
 
 
 def resnet101(**kwargs):
-    """Constructs a ResNet-101 model.
-    """
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     return model
 
 
 def resnet152(**kwargs):
-    """Constructs a ResNet-101 model.
-    """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     return model
 
 
 def resnet200(**kwargs):
-    """Constructs a ResNet-101 model.
-    """
     model = ResNet(Bottleneck, [3, 24, 36, 3], **kwargs)
     return model
+
+
+
+@dataclass(frozen=True)
+class ResNetSpec:
+    depth: int
+    layers: list
+    block: type
+
+
+_SPECS = {
+    10: ResNetSpec(depth=10, layers=[1, 1, 1, 1], block=BasicBlock),
+    18: ResNetSpec(depth=18, layers=[2, 2, 2, 2], block=BasicBlock),
+    34: ResNetSpec(depth=34, layers=[3, 4, 6, 3], block=BasicBlock),
+    50: ResNetSpec(depth=50, layers=[3, 4, 6, 3], block=Bottleneck),
+    101: ResNetSpec(depth=101, layers=[3, 4, 23, 3], block=Bottleneck),
+    152: ResNetSpec(depth=152, layers=[3, 8, 36, 3], block=Bottleneck),
+    200: ResNetSpec(depth=200, layers=[3, 24, 36, 3], block=Bottleneck),
+}
+
+
+class MedicalNetResNetPooled(nn.Module):
+    """MedicalNet backbone + global average pooling + flatten.
+
+    Forward returns:
+      - features: (B, F)
+      - optionally feature_map: (B, C, D', H', W') if return_map=True
+    """
+
+    def __init__(self, depth=50, return_map=False, shortcut_type='B', no_cuda=False):
+        super().__init__()
+        if depth not in _SPECS:
+            raise ValueError(f"Unsupported depth {depth}. Supported: {sorted(_SPECS.keys())}")
+        spec = _SPECS[depth]
+        self.backbone = MedicalNetResNet(spec.block, spec.layers, shortcut_type=shortcut_type, no_cuda=no_cuda)
+        self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        self.return_map = return_map
+
+    def forward(self, x):
+        fmap = self.backbone(x)
+        feats = self.avgpool(fmap).flatten(1)
+        if self.return_map:
+            return feats, fmap
+        return feats
+
+
+def medicalnet_resnet(depth=50, pooled=True, return_map=False, shortcut_type='B', no_cuda=False):
+    """Factory for MedicalNet ResNet.
+
+    Args:
+        depth: ResNet depth (10/18/34/50/101/152/200).
+        pooled: if True returns pooled features (B,F), else returns feature map (B,C,D',H',W').
+        return_map: only used if pooled=True; return (feats, fmap).
+        shortcut_type: 'A' or 'B' (MedicalNet convention).
+        no_cuda: used for shortcut type 'A' downsample in original code.
+    """
+    if depth not in _SPECS:
+        raise ValueError(f"Unsupported depth {depth}. Supported: {sorted(_SPECS.keys())}")
+    if pooled:
+        return MedicalNetResNetPooled(depth=depth, return_map=return_map, shortcut_type=shortcut_type, no_cuda=no_cuda)
+    spec = _SPECS[depth]
+    return MedicalNetResNet(spec.block, spec.layers, shortcut_type=shortcut_type, no_cuda=no_cuda)
