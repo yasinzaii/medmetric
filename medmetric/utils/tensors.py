@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 import torch
 
 
@@ -18,19 +18,35 @@ def ensure_same_device_dtype(x: torch.Tensor, y: torch.Tensor) -> None:
 def as_1d_tensor(
     v: Union[torch.Tensor, float, Sequence[float]],
     *,
-    ref: torch.Tensor,
+    ref: Optional[torch.Tensor] = None,
+    device: Optional[torch.device] = None,
+    dtype: Optional[torch.dtype] = None,
     name: str = "value",
     allow_empty: bool = False,
 ) -> torch.Tensor:
     """Convert v to a 1D tensor on ref.device with ref.dtype.
+    
+    You must provide either:
+      - ref=<tensor>  (uses ref.device and ref.dtype), OR
+      - device=<...>, dtype=<...>
 
     - Scalars -> shape (1,)
     - Higher-dim -> flattened to 1D
     """
+    # Resolve device/dtype
+    if ref is not None:
+        if device is None:
+            device = ref.device
+        if dtype is None:
+            dtype = ref.dtype
+    
+    if device is None or dtype is None:
+        raise TypeError(f"{name}: provide either ref=... or both device=... and dtype=...")
+    
     if isinstance(v, torch.Tensor):
-        t = v.to(device=ref.device, dtype=ref.dtype)
+        t = v.to(device=device, dtype=dtype)
     else:
-        t = torch.as_tensor(v, device=ref.device, dtype=ref.dtype)
+        t = torch.as_tensor(v, device=device, dtype=dtype)
 
     if t.ndim == 0:
         t = t[None]

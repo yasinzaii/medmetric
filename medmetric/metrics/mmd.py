@@ -23,6 +23,9 @@ def sigma_median_heuristic(
         eps: lower bound for sigma.
     """
     z = flatten_2d(z)
+    if not z.is_floating_point():
+        raise TypeError("sigma_median_heuristic expects floating point tensors.")
+    
     N = int(z.shape[0])
     if N < 2:
         return torch.tensor(1.0, device=z.device, dtype=z.dtype)
