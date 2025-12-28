@@ -192,50 +192,53 @@ def mmd2_rbf(
     return _mmd2_from_grams(Kxx, Kyy, Kxy, unbiased=not biased)
 
 
-def mmd(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    *,
-    sigmas: Optional[Union[torch.Tensor, float, Sequence[float]]] = None,
-    weights: Optional[Union[torch.Tensor, float, Sequence[float]]] = None,
-    biased: bool = False,
-    ratios: Optional[Sequence[float]] = DEFAULT_SIGMA_BANK_RATIOS,
-    median_max_points: Optional[int] = None,
-    eps: float = 1e-12,
-    kernel: str = "gaussian",
-    squared: bool = False,
-) -> torch.Tensor:
-    """Maximum Mean Discrepancy (MMD) between two sets of feature vectors.
+class MMD:
+    """Maximum Mean Discrepancy (MMD) computed on feature vectors (callable metric).
 
-    MMD currently implements the **Gaussian (RBF) kernel**.
-    (“RBF” stands for *radial basis function*; for this kernel, “gaussian” and “rbf” are used interchangeably.)
+    This class measures how different two distributions are, using the **Gaussian (RBF) kernel**
+    on feature vectors. It is intended to be used on features of shape (N, F), e.g. pooled
+    activations from a pretrained network.
 
-    Definitions
+    The instance is **callable**, so you can use it like a function:
+
+        mmd = MMD()
+        score = mmd(fake_feats, real_feats)                 # returns MMD
+        score2 = mmd(fake_feats, real_feats, squared=True)  # returns MMD^2
+
+    Kernel
+    ------
+    Gaussian / RBF kernel:
+        k(x, y) = exp( -||x-y||^2 / (2*sigma^2) )
+
+    Multi-sigma mixture (sigma bank):
+        k_mix(x, y) = sum_l w_l * exp( -||x-y||^2 / (2*sigma_l^2) ),
+        where weights w_l sum to 1.
+
+    Estimators
     ----------
-    With a kernel k(·,·), and samples X={x_i}_{i=1..m}, Y={y_j}_{j=1..n}:
-
-    Unbiased MMD^2:
+    Unbiased MMD^2 (U-statistic):
         MMD^2_unb(X,Y) =
             1/(m(m-1)) * sum_{i != j} k(x_i, x_j)
           + 1/(n(n-1)) * sum_{i != j} k(y_i, y_j)
           - 2/(mn)      * sum_{i, j}  k(x_i, y_j)
 
-    Biased MMD^2:
+    Biased MMD^2 (V-statistic):
         Same as above but includes diagonal terms in the within-set sums.
 
-    Reporting MMD:
-        MMD = sqrt(max(MMD^2, 0)).
+    Notes
+    -----
+    - The two inputs are symmetric; the names `fake_feats` and `real_feats` are used only for
+      consistency with FID.
+    - For the unbiased estimator, MMD^2 can be slightly negative due to finite-sample variance.
+      If `clamp_min` is not None (default 0.0), MMD^2 is clamped before taking sqrt (and also
+      before returning MMD^2 via `squared=True`).
 
     Parameters
     ----------
-    x, y:
-        Feature tensors for the two samples/distributions. Shapes (m, d) and (n, d).
-        If inputs have more than 2 dims, they are flattened to (batch, -1).
-        Must be floating-point and on the same device/dtype.
     sigmas:
         Kernel bandwidth(s) (sigma) for the Gaussian/RBF kernel.
         - If provided: uses these directly (ratios ignored).
-        - If None: sigma0 is computed with the median heuristic from torch.cat([x, y], dim=0).
+        - If None: sigma0 is computed with the median heuristic from torch.cat([fake_feats, real_feats], dim=0).
     weights:
         Optional mixture weights for multi-sigma kernels.
         If provided, must match len(sigmas) and be nonnegative; will be normalized.
@@ -253,47 +256,101 @@ def mmd(
         Numerical safety clamp for sigma values.
     kernel:
         Kernel name. Supported: "gaussian" (alias: "rbf").
+    clamp_min:
+        If not None (default 0.0), clamp MMD^2 to at least `clamp_min` before returning.
+
+    Call Parameters
+    ---------------
+    fake_feats:
+        Feature tensor for the first sample/distribution. Shape (m, F).
+        If input has more than 2 dims, it is flattened to (m, -1).
+        Must be floating-point.
+    real_feats:
+        Feature tensor for the second sample/distribution. Shape (n, F).
+        If input has more than 2 dims, it is flattened to (n, -1).
+        Must be floating-point.
     squared:
-        If True, return MMD^2. If False (default), return MMD.
+        If False (default), return MMD = sqrt(MMD^2). If True, return MMD^2.
 
     Returns
     -------
     torch.Tensor
-        A scalar tensor containing MMD or MMD^2.
-    
-    
+        Scalar tensor containing MMD or MMD^2.
+
     Examples
     --------
     Default (median heuristic + sigma bank):
-        m = mmd(x, y)
+        >>> mmd = MMD()
+        >>> score = mmd(fake_feats, real_feats)
 
     Disable sigma bank (single sigma0):
-        m = mmd(x, y, ratios=None)
+        >>> mmd = MMD(ratios=None)
+        >>> score = mmd(fake_feats, real_feats)
 
     Provide your own sigma bank and weights:
-        m = mmd(x, y, sigmas=[0.5, 1.0, 2.0], weights=[0.2, 0.3, 0.5])
+        >>> mmd = MMD(sigmas=[0.5, 1.0, 2.0], weights=[0.2, 0.3, 0.5])
+        >>> score = mmd(fake_feats, real_feats)
 
     Get MMD^2:
-        m2 = mmd(x, y, squared=True)
+        >>> score2 = mmd(fake_feats, real_feats, squared=True)
     """
-    
-    k = str(kernel).lower()
-    if k == "rbf":
-        k = "gaussian"
-    if k != "gaussian":
-        raise ValueError("Only gaussian kernel is supported right now.")
 
-    mmd2 = mmd2_rbf(
-        x, y,
-        sigmas=sigmas,
-        weights=weights,
-        biased=biased,
-        ratios=ratios,
-        median_max_points=median_max_points,
-        eps=eps,
-    )
+    def __init__(
+        self,
+        *,
+        sigmas: Optional[Union[torch.Tensor, float, Sequence[float]]] = None,
+        weights: Optional[Union[torch.Tensor, float, Sequence[float]]] = None,
+        biased: bool = False,
+        ratios: Optional[Sequence[float]] = DEFAULT_SIGMA_BANK_RATIOS,
+        median_max_points: Optional[int] = None,
+        eps: float = 1e-12,
+        kernel: str = "gaussian",
+        clamp_min: Optional[float] = 0.0,
+    ):
+        self.sigmas = sigmas
+        self.weights = weights
+        self.biased = biased
+        self.ratios = ratios
+        self.median_max_points = median_max_points
+        self.eps = eps
+        self.kernel = kernel
+        self.clamp_min = clamp_min
 
-    mmd2 = torch.clamp(mmd2, min=0.0)
-    if squared:
+    def mmd2(self, fake_feats: torch.Tensor, real_feats: torch.Tensor) -> torch.Tensor:
+        k = str(self.kernel).lower()
+        if k == "rbf":
+            k = "gaussian"
+        if k != "gaussian":
+            raise ValueError("Only gaussian kernel is supported right now.")
+
+        fake_feats = flatten_2d(fake_feats)
+        real_feats = flatten_2d(real_feats)
+        ensure_same_device_dtype(fake_feats, real_feats)
+
+        if (not fake_feats.is_floating_point()) or (not real_feats.is_floating_point()):
+            raise TypeError(
+                f"MMD expects floating point tensors (got {fake_feats.dtype} and {real_feats.dtype})."
+            )
+
+        mmd2 = mmd2_rbf(
+            fake_feats,
+            real_feats,
+            sigmas=self.sigmas,
+            weights=self.weights,
+            biased=self.biased,
+            ratios=self.ratios,
+            median_max_points=self.median_max_points,
+            eps=self.eps,
+        )
+
+        if self.clamp_min is not None:
+            mmd2 = torch.clamp(mmd2, min=float(self.clamp_min))
+
         return mmd2
-    return torch.sqrt(mmd2)
+
+    def __call__(self, fake_feats: torch.Tensor, real_feats: torch.Tensor, *, squared: bool = False) -> torch.Tensor:
+        mmd2 = self.mmd2(fake_feats, real_feats)
+        if squared:
+            return mmd2
+        return torch.sqrt(mmd2)
+
