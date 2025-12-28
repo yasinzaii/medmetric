@@ -2,12 +2,11 @@ import inspect
 import pytest
 import torch
 
-
 from medmetric.metrics.mmd import (
     sigma_median_heuristic,
     rbf_kernel_matrix,
     mmd2_rbf,
-    mmd,
+    MMD,
     DEFAULT_SIGMA_BANK_RATIOS,
 )
 
@@ -69,8 +68,9 @@ def test_mmd_same_distribution_smaller_than_shift():
     # Shifted distribution
     y_shift = y_same + 1.0
 
-    m_same = mmd(x, y_same, sigmas=None)  # allow heuristic defaults
-    m_shift = mmd(x, y_shift, sigmas=None)
+    mmd = MMD(sigmas=None)
+    m_same = mmd(x, y_same)  # allow heuristic defaults
+    m_shift = mmd(x, y_shift)
 
     assert float(m_shift) > float(m_same)
 
@@ -139,13 +139,15 @@ def test_kernel_selection_and_bad_kernel():
     y = torch.randn(32, 16)
 
     # gaussian should work
-    out = mmd(x, y, kernel="gaussian")
+    mmd = MMD(kernel="gaussian")
+    out = mmd(x, y)
     assert out.ndim == 0
     assert torch.isfinite(out)
     
     # unsupported kernel should raise
     with pytest.raises(ValueError):
-        mmd(x, y, kernel="linear")
+        mmd = MMD(kernel="linear")
+        mmd(x, y)
 
 
 def test_squared_flag_behavior_if_supported():
@@ -153,7 +155,9 @@ def test_squared_flag_behavior_if_supported():
     x = torch.randn(64, 32)
     y = torch.randn(64, 32)
 
+    mmd = MMD()
     m2 = mmd(x, y, squared=True)
+    mmd = MMD()
     m = mmd(x, y, squared=False)
 
     assert m2.ndim == 0 and m.ndim == 0
