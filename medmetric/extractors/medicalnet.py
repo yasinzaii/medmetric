@@ -35,10 +35,14 @@ def _load_state_dict(
     weights_path: str,
     *,
     state_dict_key: Optional[str] = None,
-    strip_prefix: Sequence[str] = None,
+    strip_prefix: Sequence[str] = (),
 ) -> dict:
     """Load a checkpoint file and return a clean state_dict."""
-    ckpt = torch.load(weights_path, map_location="cpu", weights_only=True)
+
+    try:
+        ckpt = torch.load(weights_path, map_location="cpu", weights_only=True)
+    except TypeError:
+        ckpt = torch.load(weights_path, map_location="cpu")
 
     sd = None
     if state_dict_key is not None:
@@ -63,6 +67,8 @@ def _load_state_dict(
                 raise TypeError(f"Unsupported checkpoint format at {weights_path!r}: {type(ckpt)}")
 
     # Strip DataParallel / wrapper prefixes
+    if strip_prefix is None:
+        strip_prefix = ()
     for p in strip_prefix:
         if not p:
             continue
@@ -71,15 +77,87 @@ def _load_state_dict(
     return sd
 
 
-
-
-
 class MedicalNetFeatureExtractor(nn.Module):
-    """Feature extractor returning MedicalNet features.
-
-    - If pooled=True: forward() returns (B, F) (or (feats, fmap) if return_map=True)
-    - If pooled=False: forward() returns the final feature map (B, C, D', H', W')
     """
+    MedicalNet (Med3D) feature extractor for 3D medical volumes.
+
+    This module wraps a MedicalNet-compatible 3D ResNet backbone and produces feature
+    embeddings suitable for distribution-level evaluation metrics such as FID and MMD
+    on 3D data (e.g., real vs synthetic MRI volumes).
+
+    This class does **not** perform intensity normalization. For reliable evaluation,
+    apply the same preprocessing pipeline to both real and synthetic volumes before
+    feature extraction (e.g. per-volume z-score normalization).
+
+    Parameters
+    ----------
+    depth:
+        ResNet depth used to choose the architecture/checkpoint family (e.g., 10, 18,
+        34, 50, 101, 152). This value is stored on the instance and is used as the
+        default when calling :meth:`load_pretrained`.
+    pooled:
+        If True, the forward pass returns pooled feature vectors of shape (B, F).
+        If False, returns the final convolutional feature map of shape (B, C, D', H', W').
+    return_map:
+        Only relevant when `pooled=True`. If True, returns a tuple `(feats, fmap)` where
+        `feats` is (B, F) and `fmap` is the final feature map (B, C, D', H', W').
+    shortcut_type:
+        Residual shortcut variant expected by the MedicalNet backbone (commonly "B").
+        Must match the checkpoint used.
+    layers:
+        Optional explicit stage configuration. When using :meth:`from_pretrained`, this
+        is typically populated from the pinned manifest.
+    block:
+        Block type string expected by the MedicalNet builder (e.g., "BasicBlock" or
+        "Bottleneck"). When using :meth:`from_pretrained`, this is typically populated
+        from the pinned manifest.
+    no_cuda:
+        Compatibility flag used by some MedicalNet code paths for shortcut type "A".
+        You generally do not need to set this manually.
+
+    Notes
+    -----
+    - Input should be a 5D tensor shaped **(B, 1, D, H, W)**.
+    - The extractor expects **1 input channel** (MRI volumes are typically single-channel).
+    - For evaluation, call `eval()` (this is done automatically by :meth:`from_pretrained`
+      and :meth:`load_pretrained` after loading weights).
+
+    Forward Call Parameters
+    -----------------------
+    x:
+        A tensor of shape (B, 1, D, H, W). Recommended dtype is `torch.float32`.
+
+    Returns
+    -------
+    torch.Tensor or Tuple[torch.Tensor, torch.Tensor]
+        If `pooled=True` and `return_map=False`:
+            `feats` with shape (B, F)
+        If `pooled=True` and `return_map=True`:
+            `(feats, fmap)` where `feats` is (B, F) and `fmap` is (B, C, D', H', W')
+        If `pooled=False`:
+            `fmap` with shape (B, C, D', H', W')
+
+    Examples
+    --------
+    Load a pretrained extractor (recommended):
+        >>> extractor = MedicalNetFeatureExtractor.from_pretrained(depth=50)
+        >>> x = torch.randn(2, 1, 96, 96, 96)
+        >>> feats = extractor(x)  # (2, F)
+
+    In-place loading (keeps the same instance):
+        >>> extractor = MedicalNetFeatureExtractor(depth=50)
+        >>> extractor.load_pretrained()
+        >>> feats = extractor(x)
+
+    Return pooled features and feature map:
+        >>> extractor = MedicalNetFeatureExtractor.from_pretrained(depth=50, return_map=True)
+        >>> feats, fmap = extractor(x)
+
+    Return feature map only:
+        >>> extractor = MedicalNetFeatureExtractor.from_pretrained(depth=50, pooled=False)
+        >>> fmap = extractor(x)
+    """
+
 
     def __init__(
         self,
@@ -103,6 +181,7 @@ class MedicalNetFeatureExtractor(nn.Module):
         )
         self.pooled = pooled
         self.return_map = return_map
+        self.depth = depth
 
     @classmethod
     def from_pretrained(
@@ -139,6 +218,71 @@ class MedicalNetFeatureExtractor(nn.Module):
             no_cuda=no_cuda,
         )
 
+        extractor.load_pretrained(
+            depth=entry.depth,
+            use_23dataset=entry.use_23dataset,
+            weights_path=weights_path,
+            device=device,
+            state_dict_key=state_dict_key,
+            strip_prefix=strip_prefix,
+            token=token,
+            cache_dir=cache_dir,
+        )
+        return extractor
+
+    def load_pretrained(
+        self,
+        *,
+        depth: Optional[int] = None,
+        use_23dataset: bool = True,
+        weights_path: Optional[str] = None,
+        device: Optional[str] = None,
+        state_dict_key: Optional[str] = None,
+        strip_prefix: Optional[Sequence[str]] = None,
+        token: Optional[str] = None,
+        cache_dir: Optional[str | Path] = None,
+    ) -> "MedicalNetFeatureExtractor":
+        """Load pretrained MedicalNet weights into this extractor (in-place).
+
+        This is the in-place counterpart to :meth:`from_pretrained`. It assumes the
+        current instance was constructed with an architecture compatible with the
+        selected checkpoint (depth/shortcut_type/layers/block). If not, you will get
+        missing keys and the method will raise.
+
+        Parameters
+        ----------
+        depth:
+            Checkpoint depth to load. If None, uses `self.depth`.
+        use_23dataset:
+            Whether to use the 23-dataset MedicalNet checkpoint variant.
+        weights_path:
+            Optional local checkpoint file. If None, resolves from the YAML manifest.
+        device:
+            Optional device to move the module to after loading (e.g. "cpu", "cuda:0").
+        state_dict_key, strip_prefix:
+            Rare overrides for checkpoint formats. If not provided, defaults come from
+            the YAML manifest.
+        token, cache_dir:
+            Hugging Face download options when resolving weights.
+
+        Returns
+        -------
+        MedicalNetFeatureExtractor
+            Returns `self` for chaining.
+
+        Examples
+        --------
+        >>> extractor = MedicalNetFeatureExtractor(depth=50)
+        >>> extractor.load_pretrained()
+        >>> feats = extractor(x)
+
+        Preferred one-liner:
+        >>> extractor = MedicalNetFeatureExtractor.from_pretrained(depth=50)
+        >>> feats = extractor(x)
+        """
+        d = self.depth if depth is None else int(depth)
+        entry: MedicalNetWeightEntry = get_medicalnet_entry(depth=d, use_23dataset=use_23dataset)
+
         # Resolve weights (HF hub unless local path provided)
         if weights_path is None:
             weights_path = resolve_medicalnet_weights(
@@ -151,11 +295,11 @@ class MedicalNetFeatureExtractor(nn.Module):
         sd = _load_state_dict(
             weights_path,
             state_dict_key=state_dict_key or entry.state_dict_key,
-            strip_prefix=tuple(strip_prefix) if strip_prefix is not None else entry.strip_prefix,
+            strip_prefix=tuple(strip_prefix) if strip_prefix is not None else (entry.strip_prefix or ()),
         )
 
         # Load into the correct module (pooled wrapper stores backbone under .backbone)
-        target = extractor.model.backbone if hasattr(extractor.model, "backbone") else extractor.model
+        target = self.model.backbone if hasattr(self.model, "backbone") else self.model
         missing, unexpected = target.load_state_dict(sd, strict=False)
 
         # Be strict about missing keys (usually indicates wrong checkpoint / wrong shortcut_type)
@@ -166,10 +310,10 @@ class MedicalNetFeatureExtractor(nn.Module):
         # Unexpected keys are usually harmless (e.g., optimizer states, extra heads)
         _ = unexpected
 
-        extractor.eval()
+        self.eval()
         if device is not None:
-            extractor.to(device)
-        return extractor
+            self.to(device)
+        return self
 
     @torch.no_grad()
     def forward(self, x: torch.Tensor):
