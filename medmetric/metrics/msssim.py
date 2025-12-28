@@ -144,8 +144,11 @@ class MS_SSIM:
                 f"Expected ndim >= {expected_min_ndim}, got ndim={y_pred.ndim}."
             )
 
-        return self._metric(y_pred, y)
-
+        
+        self._metric.reset()  # No accumulation across calls
+        _ = self._metric(y_pred, y)  # updates internal buffers
+        return self._metric.aggregate()  # applies reduction
+    
     def compute(self, y_pred: torch.Tensor, y: torch.Tensor):
         """Alias for __call__."""
         return self(y_pred, y)
