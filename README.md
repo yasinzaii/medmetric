@@ -190,7 +190,7 @@ from medmetric.metrics import FID, MMD, MS_SSIM
 # Config
 # -----------------------------
 
-D, H, W = 180, 180, 180
+D, H, W = 64, 64, 64
 n_real, n_fake = 16, 16
 target_pairs = 5000  # target number of fake–fake pairs to evaluate (upper-bounded by N choose 2)
 
@@ -249,7 +249,11 @@ i = torch.randint(0, n, (k,), device=fake_images.device)
 j = torch.randint(0, n - 1, (k,), device=fake_images.device)
 j = j + (j >= i)  # ensures j != i
 
-ms_ssim = MS_SSIM(spatial_dims=fake_images.ndim - 2, data_range=1.0)  # default reduction="mean"
+ms_ssim = MS_SSIM(
+    spatial_dims=fake_images.ndim - 2, 
+    data_range=1.0,
+    kernel_size=3 # default 11 [default require images with a dim > 180 approx.]
+    )  # default reduction="mean"
 ms_mean = ms_ssim(fake_images[i], fake_images[j])  # <-- actually computes the mean over k pairs
 
 
