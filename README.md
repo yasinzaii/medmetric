@@ -21,13 +21,13 @@ pip install medmetric
 
 `FID` and `MS_SSIM` are thin wrappers around MONAI metrics. If MONAI is not installed, these metrics raise an informative `ImportError`.
 
-If you added the optional extra in `pyproject.toml`:
+Recommended (installs MONAI via the package extra):
 
 ```bash
 pip install "medmetric[monai]"
 ```
 
-Or install MONAI directly:
+If your installed `medmetric` build does not expose the extra yet, install MONAI directly:
 
 ```bash
 pip install monai
@@ -113,7 +113,7 @@ This example follows the intended pipeline:
 1. Keep images in `[0,1]` for MS-SSIM  
 2. Z-score normalize volumes for MedicalNet feature extraction  
 3. Compute FID/MMD on **features**  
-4. Compute MS-SSIM “diversity” on **fake–fake unique pairs**, with `K = min(target_pairs, N*(N-1)/2)`  
+4. Compute MS-SSIM “diversity” on **fake–fake pairs**, with `K = min(target_pairs, N*(N-1)/2)`  
 
 ```python
 import torch
@@ -123,9 +123,10 @@ from medmetric.metrics import FID, MMD, MS_SSIM
 # -----------------------------
 # Config
 # -----------------------------
+
 D, H, W = 180, 180, 180
 n_real, n_fake = 16, 16
-target_pairs = 5000  # target number of fake–fake pairs (unique)
+target_pairs = 5000  # target number of fake–fake pairs to evaluate (upper-bounded by N choose 2)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 device_t = torch.device(device)
@@ -137,9 +138,9 @@ device_t = torch.device(device)
 real_images = torch.rand(n_real, 1, D, H, W, device=device_t)
 fake_images = torch.rand(n_fake, 1, D, H, W, device=device_t)
 
-
 # -----------------------------
 # IMPORTANT: z-score normalization for MedicalNet input
+# (apply the same preprocessing to both real and fake)
 # -----------------------------
 def zscore_per_volume(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     dims = tuple(range(2, x.ndim))  # normalize per (D,H,W) per sample (and per channel if C>1)
@@ -172,8 +173,8 @@ fid_score = fid(fake_feats, real_feats)
 mmd_score = mmd(fake_feats, real_feats)
 
 # -----------------------------
-# Diversity on IMAGES (fake–fake unique pairs)
-# K = min(target_pairs, N*(N-1)/2)
+# Diversity on IMAGES (fake–fake pairs)
+# For N=16 this evaluates randomly sampled pairs (120).
 # -----------------------------
 n = fake_images.shape[0]
 k = min(5000, n * (n - 1) // 2)
@@ -182,13 +183,15 @@ i = torch.randint(0, n, (k,), device=fake_images.device)
 j = torch.randint(0, n - 1, (k,), device=fake_images.device)
 j = j + (j >= i)  # ensures j != i
 
-ms_ssim = MS_SSIM(spatial_dims=fake_images.ndim - 2, data_range=1.0) # Mean Reduction (Default)
+ms_ssim = MS_SSIM(spatial_dims=fake_images.ndim - 2, data_range=1.0)  # default reduction="mean"
+ms_mean = ms_ssim(fake_images[i], fake_images[j])  # <-- actually computes the mean over k pairs
 
 
 print("FID:", float(fid_score))
 print("MMD:", float(mmd_score))
-print("MS-SSIM(fake pairs) mean:", ms_ssim)
+print("MS-SSIM(fake pairs) mean:", float(ms_mean))
 ```
+
 
 ---
 
