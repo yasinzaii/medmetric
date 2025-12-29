@@ -80,6 +80,87 @@ Keep **MS-SSIM** calculations in the **original image domain** (e.g., `[0,1]`) w
 ---
 
 ## Metrics
+# Metrics
+
+This section documents the metrics implemented in **medmetric** and how they are computed.
+
+> **Important:** In this package, **FID** and **MMD** are computed on **feature embeddings** (e.g., extracted with MedicalNet).
+> **MS-SSIM** is computed on **image/volume tensors** in their original intensity domain (e.g. `[0, 1]` with `data_range=1.0`).
+
+---
+
+## FID (Fréchet Inception Distance) — on features
+
+**What it measures:** distance between two Gaussians fit to **real** and **fake** feature distributions. Lower is better.
+
+![FID](https://latex.codecogs.com/svg.image?\mathrm{FID}(R,F)=\lVert\mu_r-\mu_f\rVert_2^2+\operatorname{Tr}\{\Sigma_r+\Sigma_f-2%28\Sigma_r\Sigma_f%29^{1/2}\})
+
+Where \(\mu_r,\Sigma_r\) are the mean/covariance of **real** features and \(\mu_f,\Sigma_f\) are the mean/covariance of **fake** features.
+
+**Usage (features):**
+```python
+from medmetric.metrics import FID
+
+fid = FID()
+score = fid(fake_feats, real_feats)  # scalar tensor
+```
+
+---
+
+## MMD (Maximum Mean Discrepancy) — on features
+
+**What it measures:** discrepancy between two distributions in an RKHS induced by kernel \(k\). Lower is better.
+
+### Unbiased MMD² (U-statistic) — default
+
+![Unbiased MMD^2](https://latex.codecogs.com/svg.image?\widehat{\mathrm{MMD}}^2_{\mathrm{unb}}(X,Y)=\frac{1}{m(m-1)}\sum_{i\ne j}k\{x_i,x_j\}+\frac{1}{n(n-1)}\sum_{i\ne j}k\{y_i,y_j\}-\frac{2}{mn}\sum_{i=1}^m\sum_{j=1}^nk\{x_i,y_j\})
+
+### Biased MMD² (V-statistic)
+
+![Biased MMD^2](https://latex.codecogs.com/svg.image?\widehat{\mathrm{MMD}}^2_{\mathrm{b}}(X,Y)=\frac{1}{m^2}\sum_{i=1}^m\sum_{j=1}^mk\{x_i,x_j\}+\frac{1}{n^2}\sum_{i=1}^n\sum_{j=1}^nk\{y_i,y_j\}-\frac{2}{mn}\sum_{i=1}^m\sum_{j=1}^nk\{x_i,y_j\})
+
+### Gaussian (RBF) kernel
+
+![RBF kernel](https://latex.codecogs.com/svg.image?k\{x,y\}=\exp\{-\lVert x-y\rVert^2/(2\sigma^2)\})
+
+**Practical note:** the **unbiased** estimator can be slightly negative due to finite-sample variance.
+A common reporting convention is:
+- report \(\max(\widehat{\mathrm{MMD}}^2, 0)\) or
+- report \(\mathrm{MMD}=\sqrt{\max(\widehat{\mathrm{MMD}}^2, 0)}\).
+
+**Usage (features):**
+```python
+from medmetric.metrics import MMD
+
+mmd = MMD()                 # unbiased by default
+score = mmd(fake_feats, real_feats)
+
+mmd_b = MMD(biased=True)    # biased MMD^2
+score_b = mmd_b(fake_feats, real_feats)
+```
+
+---
+
+## MS-SSIM (Multi-Scale Structural Similarity) — on images/volumes
+
+**What it measures:** perceptual/structural similarity between two images/volumes across multiple scales.
+Higher means “more similar”.
+
+In **medmetric**, MS-SSIM is commonly used as a **diversity proxy** by scoring many **fake–fake pairs**:
+- mean MS-SSIM ↓ → diversity ↑ (often reported as `1 - mean_ms_ssim`)
+
+**Usage (images):**
+```python
+from medmetric.metrics import MS_SSIM
+
+ms = MS_SSIM(spatial_dims=3, data_range=1.0)  # for 3D volumes in [0,1]
+val = ms(y_pred, y)  # scalar (default reduction)
+```
+
+> Tip: MS-SSIM should be computed on the **original intensity domain** (e.g. `[0,1]`),
+> not on z-scored volumes used for feature extraction.
+
+---
 
 ### FID (on features)
 
