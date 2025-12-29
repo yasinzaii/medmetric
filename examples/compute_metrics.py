@@ -34,14 +34,14 @@ from torch.utils.data import Dataset, DataLoader
 
 
 # Feature extractor
-from medmetric.extractors.medicalnet import MedicalNetFeatureExtractor
+from medmetric.extractors import MedicalNetFeatureExtractor
 
 # Metrics (features -> scalar)
-from medmetric.metrics.fid import FID
-from medmetric.metrics.mmd import MMD
+from medmetric.metrics import FID
+from medmetric.metrics import MMD
 
 # Diversity (images -> scalar)
-from medmetric.metrics.ms_ssim import MS_SSIM
+from medmetric.metrics import MS_SSIM
 
 
 # ----------------------------
@@ -96,9 +96,10 @@ def make_random_volumes(
 @torch.no_grad()
 def evaluate_single_shot(
     *,
-    real_images=real_images,
-    fake_images=fake_images,
+    real_images,
+    fake_images,
     device: str = "cpu",
+    kernel_size: int = 3,
 ) -> None:
     device_t = torch.device(device)
 
@@ -136,20 +137,19 @@ def evaluate_single_shot(
     # 6) Diversity metric on IMAGES (fake only)
     # MS-SSIM is used as diversity/structure metric here; higher MS-SSIM usually means more similarity among samples,
     # so lower value mean more diversity.
-    ms_ssim = MS_SSIM()
-    ms_ssim_score = ms_ssim(fake_images)  # by default many implementations reduce to a scalar
+    ms_ssim = MS_SSIM(spatial_dims=image_size, kernel_size=kernel_size)
+    ms_ssim_score = ms_ssim(fake_images,fake_images)  # by default many implementations reduce to a scalar
 
     print("\n=== Single-shot evaluation ===")
     print(f"Image size (D,H,W): {image_size}")
-    print(f"Real samples: {n_real}, Fake samples: {n_fake}")
+    print(f"Real samples: {real_images.shape[0]}, Fake samples: {fake_images.shape[0]}")
     print(f"FID:      {float(fid_score):.6f}")
     print(f"MMD:      {float(mmd_score):.6f}")
     print(f"MS-SSIM:  {float(ms_ssim_score):.6f}")
-    print("Tip: You can report diversity as (1 - MS-SSIM) if you prefer 'higher is more diverse'.")
 
 
 # ----------------------------
-# Scenario 2: Batched evaluation (DataLoader) with feature accumulation
+# Scenario 2: Batched evaluation (DataLoader) with feature accumulation - FID + MMD
 # ----------------------------
 
 class VolumePairDataset(Dataset):
@@ -169,11 +169,12 @@ class VolumePairDataset(Dataset):
         return self.real[idx], self.fake[idx]
 
 
+
 @torch.no_grad()
 def evaluate_batched(
     *,
-    real_images=real_images,
-    fake_images=fake_images,
+    real_images,
+    fake_images,
     batch_size: int = 4,
     device: str = "cpu",
 ) -> None:
@@ -242,8 +243,81 @@ def evaluate_batched(
     print(f"Batch size: {batch_size} (drop_last=False)")
     print(f"FID:      {float(fid_score):.6f}")
     print(f"MMD:      {float(mmd_score):.6f}")
-    print(f"MS-SSIM:  {float(ms_ssim_score):.6f}")
-    print("Tip: You can report diversity as (1 - MS-SSIM) if you prefer 'higher is more diverse'.")
+
+
+
+# ----------------------------
+# Scenario 2: Batched evaluation (DataLoader) - MS-SSIM
+# ----------------------------
+
+class FakePairDataset(Dataset):
+    """Yields (fake[i], fake[j]) for precomputed index pairs."""
+    def __init__(self, fake: torch.Tensor, i_idx: torch.Tensor, j_idx: torch.Tensor):
+        self.fake = fake
+        self.i_idx = i_idx
+        self.j_idx = j_idx
+
+    def __len__(self) -> int:
+        return int(self.i_idx.numel())
+
+    def __getitem__(self, idx: int):
+        i = int(self.i_idx[idx])
+        j = int(self.j_idx[idx])
+        return self.fake[i], self.fake[j]
+
+def sample_random_pairs(n: int, k: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample k ordered pairs (i, j) uniformly with j != i."""
+    i = torch.randint(0, n, (k,), device=device)
+    j = torch.randint(0, n - 1, (k,), device=device)
+    j = j + (j >= i)  # ensures j != i
+    return i, j
+
+
+@torch.no_grad()
+def estimate_ms_ssim_diversity(
+    fake_images: torch.Tensor,
+    *,
+    device: str = "cpu",
+    max_pairs: int = 100,  # Usually 2000-5000
+    pair_batch_size: int = 16,
+    data_range: float = 1.0,
+    kernel_size: int = 3,
+) -> float:
+    
+    device_t = torch.device(device)
+    
+    n = fake_images.shape[0]
+    num_pairs = n * (n - 1) // 2
+    k = min(max_pairs, num_pairs)
+    
+
+    # sample indices
+    i_idx, j_idx = sample_random_pairs(n, k, device=device_t)
+
+    pair_ds = FakePairDataset(fake_images, i_idx, j_idx)
+    pair_dl = DataLoader(pair_ds, batch_size=pair_batch_size, shuffle=False, drop_last=False)
+
+    ms_ssim = MS_SSIM(
+        spatial_dims=fake_images.ndim - 2,
+        data_range=data_range,
+        kernel_size=kernel_size,
+        reduction="none",   # return per-pair values -> easy global average
+    )
+
+    total = 0.0
+    count = 0
+
+    for a, b in pair_dl:
+        a = a.to(device, non_blocking=True)
+        b = b.to(device, non_blocking=True)
+
+        vals = ms_ssim(a, b)  # per-pair values
+        total += float(vals.sum())
+        count += int(vals.numel())
+
+    
+    print(f"MS-SSIM:  {float(total / max(count, 1)):.6f}")
+
 
 
 def main():
@@ -268,7 +342,7 @@ def main():
         device=device,
     )
 
-    # Scenario 2: batched
+    # Scenario 2: batched - FID + MMD
     evaluate_batched(
         image_size=image_size,
         real_images=real_images,
