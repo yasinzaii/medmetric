@@ -10,7 +10,7 @@ import yaml
 
 import medmetric
 from medmetric.models.resnet import medicalnet_resnet
-from medmetric.extractors.medicalnet import MedicalNetFeatureExtractor
+from medmetric.extractors import MedicalNetFeatureExtractor
 from medmetric.hub.medicalnet import get_medicalnet_entry
 
 
