@@ -1,4 +1,4 @@
-# medmetric
+# Medmetric
 
 **medmetric** is a lightweight PyTorch package for evaluating **real vs synthetic medical images**
 (especially **3D volumes** like brain MRI) using:
@@ -81,28 +81,94 @@ Keep **MS-SSIM** calculations in the **original image domain** (e.g., `[0,1]`) w
 
 ## Metrics
 
-### FID (on features)
+This section documents the metrics implemented in **medmetric** and how they are computed.
 
-![FID with real/fake definitions](https://latex.codecogs.com/svg.image?\begin{aligned}\mathrm{FID}(R,F)&=\lVert\mu_r-\mu_f\rVert_2^2+\operatorname{Tr}\!\left(\Sigma_r+\Sigma_f-2(\Sigma_r\Sigma_f)^{1/2}\right)\\\mu_r&=\frac{1}{N_r}\sum_{i=1}^{N_r}r_i,\qquad \Sigma_r=\frac{1}{N_r-1}\sum_{i=1}^{N_r}(r_i-\mu_r)(r_i-\mu_r)^{\top}\\\mu_f&=\frac{1}{N_f}\sum_{i=1}^{N_f}f_i,\qquad \Sigma_f=\frac{1}{N_f-1}\sum_{i=1}^{N_f}(f_i-\mu_f)(f_i-\mu_f)^{\top}\end{aligned})
+> **Important:** In this package, **FID** and **MMD** are computed on **feature embeddings** (e.g., extracted with MedicalNet).
+> **MS-SSIM** is computed on **image/volume tensors** in their original intensity domain (e.g. `[0, 1]` with `data_range=1.0`).
 
-`FID(fake_feats, real_feats)` returns a scalar tensor.
+### FID (Fréchet Inception Distance)  ``on features``
 
-### MMD (Gaussian / RBF)
+**What it measures:** distance between two Gaussians fit to **real** and **fake** feature distributions (lower is better).
+
+![FID](<https://latex.codecogs.com/svg.image?%5Cmathrm%7BFID%7D%28R%2CF%29%3D%5ClVert%5Cmu_r-%5Cmu_f%5CrVert_2%5E2%2B%5Coperatorname%7BTr%7D%5C%7B%5CSigma_r%2B%5CSigma_f-2%28%5CSigma_r%5CSigma_f%29%5E%7B1%2F2%7D%5C%7D>)
+
+Definitions (real vs fake feature statistics):
+
+![Real stats](<https://latex.codecogs.com/svg.image?%5Cmu_r%3D%5Cfrac%7B1%7D%7BN_r%7D%5Csum_%7Bi%3D1%7D%5E%7BN_r%7Dr_i%2C%5Cquad%20%5CSigma_r%3D%5Cfrac%7B1%7D%7BN_r-1%7D%5Csum_%7Bi%3D1%7D%5E%7BN_r%7D%28r_i-%5Cmu_r%29%28r_i-%5Cmu_r%29%5E%7B%5Ctop%7D>)
+
+![Fake stats](<https://latex.codecogs.com/svg.image?%5Cmu_f%3D%5Cfrac%7B1%7D%7BN_f%7D%5Csum_%7Bi%3D1%7D%5E%7BN_f%7Df_i%2C%5Cquad%20%5CSigma_f%3D%5Cfrac%7B1%7D%7BN_f-1%7D%5Csum_%7Bi%3D1%7D%5E%7BN_f%7D%28f_i-%5Cmu_f%29%28f_i-%5Cmu_f%29%5E%7B%5Ctop%7D>)
+
+- \(r_i\) are **real** feature vectors, \(f_i\) are **fake** feature vectors  
+- \(N_r\) and \(N_f\) are the number of real/fake samples
+
+**Usage (features):**
+```python
+from medmetric.metrics import FID
+
+fid = FID()
+score = fid(fake_feats, real_feats)  # scalar tensor
+```
+
+---
+
+### MMD (Maximum Mean Discrepancy)  ``on features``
+
+**What it measures:** discrepancy between two distributions in an RKHS induced by a kernel \(k\) (lower is better).
 
 **Unbiased MMD² (U-statistic)** (default):
 
-![Unbiased MMD^2](https://latex.codecogs.com/svg.image?\widehat{\mathrm{MMD}}^2_{\mathrm{unb}}(X,Y)=\frac{1}{m(m-1)}\sum_{i\neq j}k(x_i,x_j)+\frac{1}{n(n-1)}\sum_{i\neq j}k(y_i,y_j)-\frac{2}{mn}\sum_{i=1}^m\sum_{j=1}^nk(x_i,y_j))
+![Unbiased MMD^2](<https://latex.codecogs.com/svg.image?%5Cwidehat%7B%5Cmathrm%7BMMD%7D%7D_%7B%5Cmathrm%7Bunb%7D%7D%5E%7B2%7D%28X%2CY%29%3D%5Cfrac%7B1%7D%7Bm%28m-1%29%7D%5Csum_%7Bi%5Cne%20j%7Dk%28x_i%2Cx_j%29%2B%5Cfrac%7B1%7D%7Bn%28n-1%29%7D%5Csum_%7Bi%5Cne%20j%7Dk%28y_i%2Cy_j%29-%5Cfrac%7B2%7D%7Bmn%7D%5Csum_%7Bi%3D1%7D%5E%7Bm%7D%5Csum_%7Bj%3D1%7D%5E%7Bn%7Dk%28x_i%2Cy_j%29>)
 
 **Biased MMD² (V-statistic)** (`biased=True`):
 
-![Biased MMD^2](https://latex.codecogs.com/svg.image?\widehat{\mathrm{MMD}}^2_{\mathrm{b}}(X,Y)=\frac{1}{m^2}\sum_{i=1}^m\sum_{j=1}^mk(x_i,x_j)+\frac{1}{n^2}\sum_{i=1}^n\sum_{j=1}^nk(y_i,y_j)-\frac{2}{mn}\sum_{i=1}^m\sum_{j=1}^nk(x_i,y_j))
+![Biased MMD^2](<https://latex.codecogs.com/svg.image?%5Cwidehat%7B%5Cmathrm%7BMMD%7D%7D_%7B%5Cmathrm%7Bb%7D%7D%5E%7B2%7D%28X%2CY%29%3D%5Cfrac%7B1%7D%7Bm%5E%7B2%7D%7D%5Csum_%7Bi%3D1%7D%5E%7Bm%7D%5Csum_%7Bj%3D1%7D%5E%7Bm%7Dk%28x_i%2Cx_j%29%2B%5Cfrac%7B1%7D%7Bn%5E%7B2%7D%7D%5Csum_%7Bi%3D1%7D%5E%7Bn%7D%5Csum_%7Bj%3D1%7D%5E%7Bn%7Dk%28y_i%2Cy_j%29-%5Cfrac%7B2%7D%7Bmn%7D%5Csum_%7Bi%3D1%7D%5E%7Bm%7D%5Csum_%7Bj%3D1%7D%5E%7Bn%7Dk%28x_i%2Cy_j%29>)
 
-**Gaussian (RBF) kernel**:
+**Gaussian / RBF kernel**:
 
-![RBF kernel](https://latex.codecogs.com/svg.image?k(x,y)=\exp\left(-\frac{\lVert x-y\rVert^2}{2\sigma^2}\right))
+![RBF kernel](<https://latex.codecogs.com/svg.image?k%28x%2Cy%29%3D%5Cexp%5C%21%5Cleft%28-%5Cfrac%7B%5ClVert%20x-y%5CrVert%5E%7B2%7D%7D%7B2%5Csigma%5E%7B2%7D%7D%5Cright%29>)
 
-> Note: the unbiased estimator can be slightly negative due to finite-sample variance. `medmetric` clamps MMD² to `>= 0`
-> before `sqrt` by default.
+**Practical note:** the *unbiased* estimator is for **MMD²**, and it can be slightly negative due to finite-sample variance.
+Common reporting conventions are:
+
+- **Report MMD² (clamped):**
+
+![MMD^2 report](<https://latex.codecogs.com/svg.image?\max(\widehat{\mathrm{MMD}}^{2},0)>)
+
+- **Or report MMD (root of clamped MMD²):**
+
+![MMD report](<https://latex.codecogs.com/svg.image?\mathrm{MMD}=\sqrt{\max(\widehat{\mathrm{MMD}}^{2},0)}>)
+
+**Usage (features):**
+```python
+from medmetric.metrics import MMD
+
+mmd = MMD()              # unbiased by default
+score = mmd(fake_feats, real_feats)
+
+mmd_b = MMD(biased=True) # biased MMD^2
+score_b = mmd_b(fake_feats, real_feats)
+```
+
+---
+
+### MS-SSIM (Multi-Scale SSIM)  ``on images/volumes``
+
+**What it measures:** perceptual/structural similarity between two images/volumes across multiple scales.
+Higher means “more similar”.
+
+In **medmetric**, MS-SSIM is commonly used as a **diversity proxy** by scoring many **fake–fake pairs**:
+- mean MS-SSIM ↓ → diversity ↑ (often reported as `1 - mean_ms_ssim`)
+
+**Usage (images/volumes):**
+```python
+from medmetric.metrics import MS_SSIM
+
+ms = MS_SSIM(spatial_dims=3, data_range=1.0)  # for 3D volumes in [0,1]
+val = ms(y_pred, y)  # scalar (default reduction)
+```
+
+> Tip: compute MS-SSIM on the **original intensity domain** (e.g. `[0,1]` with `data_range=1.0`),
+> not on z-scored volumes used for feature extraction.
 
 ---
 
